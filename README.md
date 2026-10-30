@@ -38,7 +38,6 @@ A Python tool for extracting DOIs and paper URLs from text files, opening them i
 </div>
 
 <p align="center">
-  <strong>Maintainer:</strong> <a href="https://github.com/Quincunx33">Quincunx33</a><br>
   <strong>Contributor:</strong> <a href="https://github.com/nazakther805-alt">nazakther805-alt</a>
 </p>
 
