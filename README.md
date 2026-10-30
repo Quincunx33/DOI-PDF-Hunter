@@ -10,7 +10,7 @@
   <h3>Advanced DOI and Sci-Hub PDF downloader with smart link discovery.</h3>
 </div>
 
-A Python tool for extracting DOIs and paper URLs from text files, opening them in a real browser, and automatically discovering the final PDF file—even when the PDF is hidden behind JavaScript, blob URLs, or dynamic browser requests.
+A Python tool for extracting DOIs and paper URLs from text files, opening them in a real browser, and automatically discovering the final PDF file—even when the PDF is hidden behind JavaScript, blob URLs, or dynamically generated network responses.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/Quincunx33/DOI-PDF-Hunter/main/assets/IMG_1421.jpeg" width="48%" alt="DOI-PDF-Hunter screenshot 1" />
@@ -29,11 +29,11 @@ A Python tool for extracting DOIs and paper URLs from text files, opening them i
 ## Contributors
 
 <div align="center">
-  <a href="https://github.com/Quincunx33">
-    <img src="https://github.com/Quincunx33.png?size=120" width="120" height="120" alt="Quincunx33" />
-  </a>
   <a href="https://github.com/nazakther805-alt">
     <img src="https://github.com/nazakther805-alt.png?size=120" width="120" height="120" alt="nazakther805-alt" />
+  </a>
+  <a href="https://github.com/Quincunx33">
+    <img src="https://github.com/Quincunx33.png?size=120" width="120" height="120" alt="Quincunx33" />
   </a>
 </div>
 
