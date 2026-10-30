@@ -1,16 +1,21 @@
 # DOI-PDF-Hunter
 
 <div align="center">
-
   <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.10+" />
   <img src="https://img.shields.io/badge/Playwright-Browser-2E8B57?style=for-the-badge&logo=playwright&logoColor=white" alt="Playwright" />
   <img src="https://img.shields.io/badge/Mode-Dynamic%20PDF%20Discovery-FF7F50?style=for-the-badge" alt="Dynamic PDF discovery" />
+</div>
 
+<div align="center">
   <h3>Advanced DOI and Sci-Hub PDF downloader with smart link discovery.</h3>
-
 </div>
 
 A powerful Python utility that hunts down DOI-based paper links, discovers Sci-Hub PDF endpoints dynamically, follows browser-generated blob/data PDF URLs, and saves cleanly organized PDF files with duplicate protection and retry logic.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Quincunx33/DOI-PDF-Hunter/main/assets/IMG_1421.jpeg" width="48%" alt="DOI-PDF-Hunter dashboard screenshot 1" />
+  <img src="https://raw.githubusercontent.com/Quincunx33/DOI-PDF-Hunter/main/assets/IMG_1422.jpeg" width="48%" alt="DOI-PDF-Hunter dashboard screenshot 2" />
+</p>
 
 ## Highlights
 
@@ -56,7 +61,7 @@ DOI-PDF-Hunter/
 ├── invalid_links.txt     # Parsing issues
 ├── file_hashes.json      # Hash index for duplicate detection
 ├── download_errors.log   # Runtime and network errors
-├── assets/               # Optional repo assets
+├── assets/               # Screenshots and project assets
 ├── README.md             # Project documentation
 └── requirements.txt      # If present in your setup
 ```
