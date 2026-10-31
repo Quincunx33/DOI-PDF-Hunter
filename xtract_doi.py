@@ -29,6 +29,7 @@ MAX_PDF_BYTES = 100 * 1024 * 1024
 MAX_LINK_ATTEMPTS = 3
 MAX_PAGE_ATTEMPTS = 3
 ERROR_LOG = "download_errors.log"
+SETTINGS_FILE = "settings.json"
 VERBOSE = os.environ.get("PDF_VERBOSE", "").strip().lower() in {"1", "yes", "true"}
 BATCH_SIZE = 999
 
@@ -252,7 +253,7 @@ def select_link_files(directory="."):
     if not candidates:
         sys.exit(
             f"{paint('No DOI/URL TXT files found.', '31')}\n"
-            "Put links.txt beside download.py."
+            "Put a .txt file containing DOI/URL links beside xtract_doi.py."
         )
     if len(candidates) == 1:
         print(f"TXT: {candidates[0].name} (selected)")
@@ -292,6 +293,214 @@ def select_link_files(directory="."):
             return [candidates[number - 1] for number in numbers]
         except ValueError:
             print("Use a file number (e.g. 1,2) or 'all'.")
+
+
+def load_settings(path=None):
+    """Load user settings, resolving relative download folders beside the script."""
+    settings_path = Path(path) if path is not None else SCRIPT_DIR / SETTINGS_FILE
+    try:
+        saved = json.loads(settings_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        saved = {}
+    download_dir = saved.get("download_dir", DOWNLOAD_DIR) if isinstance(saved, dict) else DOWNLOAD_DIR
+    if not isinstance(download_dir, str) or not download_dir.strip():
+        download_dir = DOWNLOAD_DIR
+    destination = Path(download_dir).expanduser()
+    if not destination.is_absolute():
+        destination = SCRIPT_DIR / destination
+    return {"download_dir": str(destination.resolve())}
+
+
+def save_settings(settings, path=None):
+    """Atomically persist the selected download folder."""
+    settings_path = Path(path) if path is not None else SCRIPT_DIR / SETTINGS_FILE
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = settings_path.with_name(settings_path.name + ".tmp")
+    try:
+        temp_path.write_text(
+            json.dumps(settings, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        temp_path.replace(settings_path)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+def prepare_download_directory(destination):
+    """Resolve a destination and create it, including any missing parents."""
+    folder = Path(destination).expanduser()
+    if not folder.is_absolute():
+        folder = SCRIPT_DIR / folder
+    folder = folder.resolve()
+    if folder.exists() and not folder.is_dir():
+        raise NotADirectoryError(f"Download destination is not a folder: {folder}")
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+def show_setup_window(settings):
+    """Show a native picker with discovered link files and persistent output settings.
+
+    Returns (selected_files, download_dir), or None when the user cancels.
+    Tkinter is optional so the CLI remains usable on minimal/headless systems.
+    """
+    import tkinter as tk
+    from tkinter import filedialog, messagebox, simpledialog
+
+    root = tk.Tk()
+    root.title("DOI PDF Hunter — setup")
+    root.geometry("720x520")
+    root.minsize(600, 440)
+    root.columnconfigure(0, weight=1)
+    root.rowconfigure(2, weight=1)
+
+    tk.Label(root, text="Choose link files", font=("TkDefaultFont", 14, "bold")).grid(
+        row=0, column=0, sticky="w", padx=18, pady=(16, 4)
+    )
+    tk.Label(
+        root,
+        text="Discovered .txt files containing DOI/URL links are listed below. Select one or more, or browse for another file.",
+        wraplength=680,
+        justify="left",
+    ).grid(row=1, column=0, sticky="w", padx=18, pady=(0, 12))
+
+    file_frame = tk.Frame(root)
+    file_frame.grid(row=2, column=0, sticky="nsew", padx=18)
+    file_frame.columnconfigure(0, weight=1)
+    file_frame.rowconfigure(0, weight=1)
+    file_list = tk.Listbox(file_frame, selectmode=tk.EXTENDED, exportselection=False)
+    file_scroll = tk.Scrollbar(file_frame, orient="vertical", command=file_list.yview)
+    file_list.configure(yscrollcommand=file_scroll.set)
+    file_list.grid(row=0, column=0, sticky="nsew")
+    file_scroll.grid(row=0, column=1, sticky="ns")
+
+    discovered = discover_link_files(SCRIPT_DIR)
+    files = []
+
+    def add_file(path):
+        candidate = Path(path).expanduser().resolve()
+        if candidate.is_file() and candidate.suffix.casefold() == ".txt" and candidate not in files:
+            files.append(candidate)
+            label = str(candidate) if candidate.parent != SCRIPT_DIR else candidate.name
+            file_list.insert(tk.END, label)
+            if candidate.name.casefold() == LINKS_FILE.casefold():
+                file_list.selection_set(tk.END)
+
+    for candidate in discovered:
+        add_file(candidate)
+
+    def browse_files():
+        picked = filedialog.askopenfilenames(
+            parent=root,
+            title="Select link file(s)",
+            initialdir=str(SCRIPT_DIR),
+            filetypes=(("Text files", "*.txt"), ("All files", "*.*")),
+        )
+        for candidate in picked:
+            add_file(candidate)
+            try:
+                file_list.selection_set(files.index(Path(candidate).resolve()))
+            except ValueError:
+                pass
+
+    tk.Button(file_frame, text="Browse for link file(s)…", command=browse_files).grid(
+        row=1, column=0, sticky="w", pady=(8, 0)
+    )
+
+    settings_frame = tk.LabelFrame(root, text="Settings — download location", padx=10, pady=8)
+    settings_frame.grid(row=3, column=0, sticky="ew", padx=18, pady=(14, 10))
+    settings_frame.columnconfigure(0, weight=1)
+    download_var = tk.StringVar(value=settings["download_dir"])
+    tk.Entry(settings_frame, textvariable=download_var).grid(row=0, column=0, sticky="ew", padx=(0, 8))
+
+    def browse_folder():
+        current = Path(download_var.get()).expanduser()
+        initial = current if current.is_dir() else current.parent
+        folder = filedialog.askdirectory(
+            parent=root,
+            title="Choose PDF download folder",
+            initialdir=str(initial if initial.is_dir() else SCRIPT_DIR),
+            mustexist=True,
+        )
+        if folder:
+            download_var.set(str(Path(folder).resolve()))
+
+    def create_folder():
+        current = Path(download_var.get()).expanduser()
+        initial = current if current.is_dir() else current.parent
+        parent = filedialog.askdirectory(
+            parent=root,
+            title="Choose where to create the new folder",
+            initialdir=str(initial if initial.is_dir() else SCRIPT_DIR),
+            mustexist=True,
+        )
+        if not parent:
+            return
+        name = simpledialog.askstring("Create download folder", "New folder name:", parent=root)
+        if not name:
+            return
+        if Path(name).name != name or name in {".", ".."}:
+            messagebox.showerror("Invalid folder name", "Enter a folder name, not a path.", parent=root)
+            return
+        new_folder = Path(parent) / name
+        try:
+            new_folder.mkdir(parents=True, exist_ok=True)
+            download_var.set(str(new_folder.resolve()))
+        except OSError as exc:
+            messagebox.showerror("Could not create folder", str(exc), parent=root)
+
+    tk.Button(settings_frame, text="Browse…", command=browse_folder).grid(row=0, column=1, padx=(0, 6))
+    tk.Button(settings_frame, text="Create folder…", command=create_folder).grid(row=0, column=2)
+    tk.Label(
+        settings_frame,
+        text="This location is saved in settings.json and reused next time.",
+        anchor="w",
+    ).grid(row=1, column=0, columnspan=3, sticky="ew", pady=(6, 0))
+
+    result = {"value": None}
+
+    def start_download():
+        indices = file_list.curselection()
+        selected = [files[index] for index in indices]
+        if not selected:
+            messagebox.showwarning("Choose link files", "Select at least one discovered or browsed .txt file.", parent=root)
+            return
+        raw_destination = download_var.get().strip()
+        if not raw_destination:
+            messagebox.showwarning("Choose download folder", "Enter or select a download folder.", parent=root)
+            return
+        try:
+            destination = prepare_download_directory(raw_destination)
+            save_settings({"download_dir": str(destination)})
+        except OSError as exc:
+            messagebox.showerror("Download folder unavailable", str(exc), parent=root)
+            return
+        result["value"] = (selected, destination)
+        root.destroy()
+
+    buttons = tk.Frame(root)
+    buttons.grid(row=4, column=0, sticky="e", padx=18, pady=(0, 16))
+    tk.Button(buttons, text="Cancel", command=root.destroy).pack(side="right", padx=(8, 0))
+    tk.Button(buttons, text="Start download", default="active", command=start_download).pack(side="right")
+    root.mainloop()
+    try:
+        root.destroy()
+    except tk.TclError:
+        pass
+    return result["value"]
+
+
+def choose_download_dir_cli(settings):
+    """CLI fallback for selecting and creating a download directory."""
+    default = Path(settings["download_dir"])
+    choice = input(f"Download folder [{default}] (Enter to keep): ").strip()
+    requested = choice if choice else default
+    try:
+        destination = prepare_download_directory(requested)
+        save_settings({"download_dir": str(destination)})
+    except OSError as exc:
+        sys.exit(f"Could not create download folder {requested}: {exc}")
+    return destination
 
 
 def load_links(paths):
@@ -923,11 +1132,21 @@ def main():
                      ( )
                       Y""", "96"))
     print(paint("PDF Downloader", "1;36"))
-    selected_files = select_link_files()
+    settings = load_settings()
+    try:
+        setup = show_setup_window(settings)
+    except Exception as exc:
+        print(f"File-picker window unavailable ({short_error(exc)}); using terminal selection.")
+        selected_files = select_link_files(SCRIPT_DIR)
+        outdir = choose_download_dir_cli(settings)
+    else:
+        if setup is None:
+            print("Setup cancelled; no downloads were started.")
+            return
+        selected_files, outdir = setup
     links = load_links(selected_files)
-    outdir = Path(DOWNLOAD_DIR)
-    outdir.mkdir(exist_ok=True)
-    hash_index_path = Path(HASH_INDEX_FILE)
+    outdir.mkdir(parents=True, exist_ok=True)
+    hash_index_path = outdir / HASH_INDEX_FILE
     hash_index = index_existing_pdfs(outdir, load_hash_index(hash_index_path), hash_index_path)
     todo = links[:BATCH_SIZE]
     print(f"Files: {', '.join(path.name for path in selected_files)}")

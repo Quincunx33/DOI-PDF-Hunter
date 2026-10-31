@@ -55,14 +55,18 @@ pip install playwright
 python -m playwright install chromium
 ```
 
-Create a file named `links.txt` in the project root:
+On startup, the setup window discovers `.txt` files beside the script that contain DOI/URL links. Select one or more files from the list, or use **Browse for link file(s)** to choose a `.txt` file elsewhere. A `links.txt` file is no longer required.
+
+In **Settings — download location**, browse to an existing folder or create a new folder. The chosen destination is stored in `settings.json` and reused the next time the tool starts. The PDF hash index is kept in that destination so duplicate checks follow the selected folder.
+
+Example contents for a link file:
 
 ```text
 10.1038/s41586-020-00773-7
 https://doi.org/10.1109/ICCV.2019.00027
 ```
 
-Run:
+Run the tool:
 
 ```bash
 python xtract_doi.py
@@ -70,13 +74,20 @@ python xtract_doi.py
 
 ## Notes
 
-- Outputs are saved in the `downloads/` folder.
+- PDFs are saved in the selected download folder (initially `downloads/`).
 - Duplicate and skipped items are tracked automatically.
 - Some sites may require a CAPTCHA or manual browser interaction.
+- On headless/minimal systems without Tkinter, the tool falls back to terminal file discovery/selection and lets you enter a download-folder path. Linux users may need to install their distribution's `python3-tk` package to use the native setup window.
 - For extra logs, run:
 
 ```bash
 PDF_VERBOSE=1 python xtract_doi.py
+```
+
+Run the automated tests with:
+
+```bash
+python -m unittest discover -v
 ```
 
 ## Why use it?

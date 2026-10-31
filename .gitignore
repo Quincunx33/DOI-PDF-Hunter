@@ -1,0 +1,17 @@
+# User-selected destination and downloaded/runtime data
+settings.json
+downloads/
+browser_profile/
+*.pdf
+*.part
+done.txt
+skipped.txt
+invalid_links.txt
+download_errors.log
+file_hashes.json
+
+# Python caches and virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
