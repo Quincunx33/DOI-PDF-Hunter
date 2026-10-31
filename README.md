@@ -92,7 +92,7 @@ PDF_VERBOSE=1 python xtract_doi.py
 Run the automated tests with:
 
 ```bash
-python -m unittest discover -v
+python -m unittest discover -s tests -t . -v
 ```
 
 ## Why use it?
