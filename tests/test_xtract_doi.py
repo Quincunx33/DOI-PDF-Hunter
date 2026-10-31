@@ -72,28 +72,15 @@ class LinkInputTests(unittest.TestCase):
                 )
             self.assertEqual(selected, [external_file.resolve()])
 
-    def test_console_status_output_includes_requested_live_states(self):
-        output = StringIO()
-        with redirect_stdout(output):
-            xtract_doi.show_item_result(1, 1, "10.1000/example", "pending")
-            xtract_doi.show_item_result(1, 1, "10.1000/example", "processing")
-            xtract_doi.show_item_result(1, 1, "10.1000/example", "ok")
-        for label in ("PENDING", "PROCESSING", "SUCCESS"):
-            self.assertIn(label, output.getvalue())
-
     def test_realtime_aggregate_counts_update_for_each_result(self):
         counts = xtract_doi.new_queue_counts(4)
-        output = StringIO()
-        with redirect_stdout(output):
-            xtract_doi.show_queue_counts(counts)
+        xtract_doi.apply_queue_transition(counts, "processing")
+        self.assertEqual((counts["pending"], counts["processing"]), (3, 1))
+        xtract_doi.apply_queue_transition(counts, "pending")
+        self.assertEqual((counts["pending"], counts["processing"]), (4, 0))
+        for result in ("ok", "skip", "missing", "error"):
             xtract_doi.apply_queue_transition(counts, "processing")
-            xtract_doi.show_queue_counts(counts)
-            xtract_doi.apply_queue_transition(counts, "pending")
-            xtract_doi.show_queue_counts(counts)
-            for result in ("ok", "skip", "missing", "error"):
-                xtract_doi.apply_queue_transition(counts, "processing")
-                xtract_doi.apply_queue_transition(counts, result)
-                xtract_doi.show_queue_counts(counts)
+            xtract_doi.apply_queue_transition(counts, result)
         self.assertEqual(
             counts,
             {
@@ -106,13 +93,55 @@ class LinkInputTests(unittest.TestCase):
                 "failed": 1,
             },
         )
+
+    def test_dashboard_shows_progress_current_doi_and_live_counts(self):
+        counts = xtract_doi.new_queue_counts(2)
+        output = StringIO()
+        with redirect_stdout(output):
+            dashboard = xtract_doi.TerminalDashboard()
+            dashboard.render(counts, status="PREPARING", detail="Starting browser")
+            xtract_doi.apply_queue_transition(counts, "processing")
+            dashboard.render(
+                counts,
+                status="PROCESSING",
+                position=1,
+                link="10.1000/example",
+            )
+            xtract_doi.apply_queue_transition(counts, "ok")
+            dashboard.render(
+                counts,
+                status="SUCCESS",
+                position=1,
+                link="10.1000/example",
+                detail="saved paper.pdf",
+            )
         rendered = output.getvalue()
-        self.assertIn("Pending: 4 | Processing: 0", rendered)
-        self.assertIn("Pending: 3 | Processing: 1", rendered)
-        self.assertIn("Success: 1", rendered)
-        self.assertIn("Skipped: 1", rendered)
-        self.assertIn("Missing: 1", rendered)
-        self.assertIn("Failed: 1", rendered)
+        self.assertIn("DOI PDF HUNTER", rendered)
+        self.assertTrue("Processing 1" in rendered or "PROC 1" in rendered)
+        self.assertTrue("Pending 1" in rendered or "PEND 1" in rendered)
+        self.assertTrue("Success 1" in rendered or "SUCCESS 1" in rendered)
+        self.assertIn("PROCESSING  1/2", rendered)
+        self.assertIn("Searching PDF", rendered)
+        self.assertIn("10.1000/example", rendered)
+        self.assertIn("░", rendered)
+
+    def test_dashboard_redraws_same_region_on_interactive_terminal(self):
+        class FakeTerminal(StringIO):
+            @staticmethod
+            def isatty():
+                return True
+
+        terminal = FakeTerminal()
+        counts = xtract_doi.new_queue_counts(1)
+        with patch.object(xtract_doi.sys, "stdout", terminal):
+            dashboard = xtract_doi.TerminalDashboard()
+            dashboard.ansi = True
+            dashboard.render(counts, status="READY")
+            xtract_doi.apply_queue_transition(counts, "processing")
+            dashboard.render(counts, status="PROCESSING", position=1, link="10.1000/test")
+        rendered = terminal.getvalue()
+        self.assertIn("\x1b[3A", rendered)
+        self.assertIn("\x1b[2K", rendered)
 
 
 class DownloadSettingsTests(unittest.TestCase):

@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -108,21 +109,6 @@ def compact_link(link, limit=52):
     return link[:limit - 1] + "…"
 
 
-def show_item_result(position, total, link, status, detail=""):
-    styles = {
-        "pending": ("PENDING", "36"),
-        "processing": ("PROCESSING", "33"),
-        "ok": ("SUCCESS", "32"),
-        "skip": ("SKIPPED", "33"),
-        "missing": ("MISSING", "33"),
-        "error": ("FAILED", "31"),
-    }
-    name, color = styles.get(status, (status.upper(), "36"))
-    extra = f"  {detail}" if detail else ""
-    print(f"[{position:>{len(str(total))}}/{total}] "
-          f"{paint(name.ljust(10), color)}  {compact_link(link)}{extra}", flush=True)
-
-
 def new_queue_counts(total):
     """Create counters for all links still pending at the start of this run."""
     return {
@@ -158,20 +144,107 @@ def apply_queue_transition(counts, status):
     counts[completed_key] += 1
 
 
-def show_queue_counts(counts):
-    """Print the latest aggregate queue counts after each status transition."""
-    print(
-        "Live counts | "
-        f"Total: {counts['total']} | Pending: {counts['pending']} | "
-        f"Processing: {counts['processing']} | Success: {counts['success']} | "
-        f"Skipped: {counts['skipped']} | Missing: {counts['missing']} | "
-        f"Failed: {counts['failed']}",
-        flush=True,
-    )
+class TerminalDashboard:
+    """Render a clean, fixed-size terminal dashboard instead of scrolling logs."""
+
+    STATUS_COLORS = {
+        "PREPARING": "36",
+        "READY": "36",
+        "PROCESSING": "33",
+        "SUCCESS": "32",
+        "SKIPPED": "33",
+        "MISSING": "33",
+        "FAILED": "31",
+        "STOPPED": "33",
+        "COMPLETE": "1;32",
+    }
+
+    def __init__(self):
+        self.is_tty = bool(sys.stdout and sys.stdout.isatty())
+        self.ansi = self.is_tty and COLOR_ENABLED
+        self.drawn = False
+        self.width = shutil.get_terminal_size(fallback=(100, 24)).columns
+
+    def _clip(self, text):
+        return text[:max(1, self.width - 1)]
+
+    def _lines(self, counts, status, position=None, link="", detail=""):
+        total = counts["total"]
+        completed = counts["success"] + counts["skipped"] + counts["missing"] + counts["failed"]
+        percent = (completed / total * 100) if total else 100.0
+        bar_width = min(20, max(8, self.width - 58))
+        filled = round(bar_width * completed / total) if total else bar_width
+        bar = "█" * filled + "░" * (bar_width - filled)
+        title = "DOI PDF HUNTER"
+        line1 = f"{title}   {bar}   {completed}/{total} completed   {percent:5.1f}%"
+        line2 = (
+            f"Pending {counts['pending']}  |  Processing {counts['processing']}  |  "
+            f"Success {counts['success']}  |  Skipped {counts['skipped']}  |  "
+            f"Missing {counts['missing']}  |  Failed {counts['failed']}"
+        )
+        if len(line2) > self.width - 1:
+            line2 = (
+                f"PEND {counts['pending']} | PROC {counts['processing']} | "
+                f"SUCCESS {counts['success']} | SKIP {counts['skipped']} | "
+                f"MISS {counts['missing']} | FAIL {counts['failed']}"
+            )
+        current = f"{status}"
+        if position is not None:
+            current += f"  {position}/{total}"
+        message = f"Searching PDF | {link}" if status == "PROCESSING" else (detail or link)
+        if message:
+            current += f"  |  {message}"
+        return [self._clip(line) for line in (line1, line2, current)]
+
+    def render(self, counts, status="READY", position=None, link="", detail=""):
+        self.width = shutil.get_terminal_size(fallback=(100, 24)).columns
+        lines = self._lines(counts, status, position, link, detail)
+        status_color = self.STATUS_COLORS.get(status, "36")
+        title = "DOI PDF HUNTER"
+        first = paint(title, "1;36") + lines[0][len(title):]
+        second = paint(lines[1], "90")
+        third = paint(status, status_color) + lines[2][len(status):]
+        if self.ansi:
+            output = "\033[3A" if self.drawn else ""
+            for line in (first, second, third):
+                output += "\033[2K" + line + "\n"
+            sys.stdout.write(output)
+            sys.stdout.flush()
+        elif self.is_tty:
+            compact = (
+                f"{status} | {completed_count(counts)}/{counts['total']} done | "
+                f"P:{counts['pending']} R:{counts['processing']} S:{counts['success']} "
+                f"SK:{counts['skipped']} M:{counts['missing']} F:{counts['failed']}"
+            )
+            sys.stdout.write("\r" + compact[:self.width - 1].ljust(self.width - 1))
+            sys.stdout.flush()
+        else:
+            print("\n".join(lines), flush=True)
+        self.drawn = True
+
+    def finish(self):
+        if self.is_tty and not self.ansi:
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+
+
+def completed_count(counts):
+    return counts["success"] + counts["skipped"] + counts["missing"] + counts["failed"]
+
+
+ACTIVE_DASHBOARD = None
+
+
+def suspend_dashboard_for_message():
+    """Start any interactive/log message below the dashboard, not over it."""
+    if ACTIVE_DASHBOARD is not None and ACTIVE_DASHBOARD.ansi and ACTIVE_DASHBOARD.drawn:
+        ACTIVE_DASHBOARD.drawn = False
+        print()
 
 
 def verbose(message):
     if VERBOSE:
+        suspend_dashboard_for_message()
         print(paint("  · " + message, "90"), flush=True)
 
 
@@ -713,6 +786,7 @@ def wait_for_ddos_guard(page):
 
 
 def human_pause(message):
+    suspend_dashboard_for_message()
     print(f"\n{paint('ACTION REQUIRED', '1;33')}  {message}", flush=True)
     input("Fix it in the browser, then press Enter to continue: ")
 
@@ -1188,21 +1262,13 @@ def handle(context, page, link, index, outdir, hash_index, index_path):
 
 
 def main():
+    global ACTIVE_DASHBOARD
     # Opening a .py by double-click may start Python from its installation
     # folder. Always search beside this script instead of WindowsApps.
     os.chdir(SCRIPT_DIR)
-    print(paint(r"""                    _.:._
-                  ."\ | /".
-.,__              "=.\:/.="              __,.
- "=.`"=._            /^\            _.="`.="
-   ".'.'."=.=.=.=.-,/   \,-.=.=.=.=".'.'."
-     `~.`.`.`.`.`.`.     .'.'.'.'.'.'.~`
-        `~.`` ` `.`.\   /.'.' ' ''.~`
-            `=.-~~-._ ) ( _.-~~-.=`
-                    `\ /`
-                     ( )
-                      Y""", "96"))
-    print(paint("PDF Downloader", "1;36"))
+    print()
+    print(paint("  DOI PDF HUNTER", "1;36"))
+    print(paint("  Academic PDF downloader", "90"))
     settings = load_settings()
     try:
         setup = show_setup_window(settings)
@@ -1225,11 +1291,15 @@ def main():
     print(f"Queue: {len(links)} pending | This run: {len(todo)} | Retries/link: {MAX_LINK_ATTEMPTS - 1}")
     print(paint("─" * 65, "90"))
     counts = new_queue_counts(len(links))
-    show_queue_counts(counts)
+    dashboard = TerminalDashboard()
+    ACTIVE_DASHBOARD = dashboard
+    dashboard.render(counts, status="PREPARING", detail="Starting browser…")
 
     saved = 0
     skipped, missing, failed = [], [], []
     interrupted = False
+    runtime_error = False
+    runtime_error_detail = ""
     context = None
     active_link = None
     active_position = None
@@ -1257,8 +1327,12 @@ def main():
             for i, link in enumerate(todo, start=1):
                 active_link, active_position = link, i
                 apply_queue_transition(counts, "processing")
-                show_item_result(i, len(todo), link, "processing")
-                show_queue_counts(counts)
+                dashboard.render(
+                    counts,
+                    status="PROCESSING",
+                    position=i,
+                    link=link,
+                )
                 result, detail = "error", "unexpected error"
                 for attempt in range(1, MAX_LINK_ATTEMPTS + 1):
                     try:
@@ -1290,32 +1364,48 @@ def main():
                 else:
                     failed.append(link)
                 active_link, active_position = None, None
-                show_item_result(i, len(todo), link, result, detail)
-                show_queue_counts(counts)
+                visible_status = {
+                    "ok": "SUCCESS",
+                    "skip": "SKIPPED",
+                    "missing": "MISSING",
+                    "error": "FAILED",
+                }.get(result, "FAILED")
+                dashboard.render(
+                    counts,
+                    status=visible_status,
+                    position=i,
+                    link=link,
+                    detail=detail,
+                )
                 if i != len(todo):
                     time.sleep(DELAY_BETWEEN_LINKS)
     except KeyboardInterrupt:
         interrupted = True
         if active_link is not None:
             apply_queue_transition(counts, "pending")
-            show_item_result(
-                active_position, len(todo), active_link, "pending", "interrupted; still pending"
+            dashboard.render(
+                counts,
+                status="STOPPED",
+                position=active_position,
+                link=active_link,
+                detail="item returned to pending",
             )
             active_link, active_position = None, None
-            show_queue_counts(counts)
-        print("\n" + paint("Stopped by user. Completed downloads are retained.", "33"))
     except Exception as exc:
+        runtime_error = True
+        runtime_error_detail = short_error(exc)
         record_error("startup/runtime", BASE, exc)
         if active_link is not None:
             apply_queue_transition(counts, "error")
             failed.append(active_link)
-            show_item_result(
-                active_position, len(todo), active_link, "error", "runtime error; see error log"
+            dashboard.render(
+                counts,
+                status="FAILED",
+                position=active_position,
+                link=active_link,
+                detail="runtime error; see error log",
             )
             active_link, active_position = None, None
-            show_queue_counts(counts)
-        print(paint(f"Browser error: {short_error(exc)}", "31"))
-        print(f"Details saved to {ERROR_LOG}")
     finally:
         if context is not None:
             try:
@@ -1328,8 +1418,20 @@ def main():
                     fh.write("\n".join(missing + failed) + "\n")
             except OSError as exc:
                 record_error("skip log", SKIP_LOG, exc)
+        final_status = "STOPPED" if interrupted else ("FAILED" if runtime_error else "COMPLETE")
+        final_detail = (
+            "Interrupted; unfinished item is pending again"
+            if interrupted
+            else (
+                f"{runtime_error_detail} · see {ERROR_LOG}"
+                if runtime_error
+                else "Run finished"
+            )
+        )
+        dashboard.render(counts, status=final_status, detail=final_detail)
+        dashboard.finish()
+        ACTIVE_DASHBOARD = None
         print(paint("─" * 65, "90"))
-        show_queue_counts(counts)
         print(f"Summary: {paint(str(saved) + ' saved', '32')} | "
               f"{len(skipped)} already present/duplicate | "
               f"{len(missing)} missing | {paint(str(len(failed)) + ' failed', '31')}")
