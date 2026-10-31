@@ -81,6 +81,39 @@ class LinkInputTests(unittest.TestCase):
         for label in ("PENDING", "PROCESSING", "SUCCESS"):
             self.assertIn(label, output.getvalue())
 
+    def test_realtime_aggregate_counts_update_for_each_result(self):
+        counts = xtract_doi.new_queue_counts(4)
+        output = StringIO()
+        with redirect_stdout(output):
+            xtract_doi.show_queue_counts(counts)
+            xtract_doi.apply_queue_transition(counts, "processing")
+            xtract_doi.show_queue_counts(counts)
+            xtract_doi.apply_queue_transition(counts, "pending")
+            xtract_doi.show_queue_counts(counts)
+            for result in ("ok", "skip", "missing", "error"):
+                xtract_doi.apply_queue_transition(counts, "processing")
+                xtract_doi.apply_queue_transition(counts, result)
+                xtract_doi.show_queue_counts(counts)
+        self.assertEqual(
+            counts,
+            {
+                "total": 4,
+                "pending": 0,
+                "processing": 0,
+                "success": 1,
+                "skipped": 1,
+                "missing": 1,
+                "failed": 1,
+            },
+        )
+        rendered = output.getvalue()
+        self.assertIn("Pending: 4 | Processing: 0", rendered)
+        self.assertIn("Pending: 3 | Processing: 1", rendered)
+        self.assertIn("Success: 1", rendered)
+        self.assertIn("Skipped: 1", rendered)
+        self.assertIn("Missing: 1", rendered)
+        self.assertIn("Failed: 1", rendered)
+
 
 class DownloadSettingsTests(unittest.TestCase):
     def test_settings_round_trip(self):

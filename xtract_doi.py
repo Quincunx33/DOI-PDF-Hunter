@@ -123,6 +123,53 @@ def show_item_result(position, total, link, status, detail=""):
           f"{paint(name.ljust(10), color)}  {compact_link(link)}{extra}", flush=True)
 
 
+def new_queue_counts(total):
+    """Create counters for all links still pending at the start of this run."""
+    return {
+        "total": total,
+        "pending": total,
+        "processing": 0,
+        "success": 0,
+        "skipped": 0,
+        "missing": 0,
+        "failed": 0,
+    }
+
+
+def apply_queue_transition(counts, status):
+    """Update aggregate counts for processing, completion, or interruption."""
+    if status == "processing":
+        counts["pending"] -= 1
+        counts["processing"] += 1
+        return
+    if status == "pending":
+        counts["processing"] -= 1
+        counts["pending"] += 1
+        return
+    completed_key = {
+        "ok": "success",
+        "skip": "skipped",
+        "missing": "missing",
+        "error": "failed",
+    }.get(status)
+    if completed_key is None:
+        raise ValueError(f"Unknown queue status: {status}")
+    counts["processing"] -= 1
+    counts[completed_key] += 1
+
+
+def show_queue_counts(counts):
+    """Print the latest aggregate queue counts after each status transition."""
+    print(
+        "Live counts | "
+        f"Total: {counts['total']} | Pending: {counts['pending']} | "
+        f"Processing: {counts['processing']} | Success: {counts['success']} | "
+        f"Skipped: {counts['skipped']} | Missing: {counts['missing']} | "
+        f"Failed: {counts['failed']}",
+        flush=True,
+    )
+
+
 def verbose(message):
     if VERBOSE:
         print(paint("  · " + message, "90"), flush=True)
@@ -1177,14 +1224,15 @@ def main():
     print(f"PDF download folder: {outdir}")
     print(f"Queue: {len(links)} pending | This run: {len(todo)} | Retries/link: {MAX_LINK_ATTEMPTS - 1}")
     print(paint("─" * 65, "90"))
-    for position, link in enumerate(todo, start=1):
-        show_item_result(position, len(todo), link, "pending")
-    print(paint("─" * 65, "90"))
+    counts = new_queue_counts(len(links))
+    show_queue_counts(counts)
 
     saved = 0
     skipped, missing, failed = [], [], []
     interrupted = False
     context = None
+    active_link = None
+    active_position = None
     try:
         with sync_playwright() as p:
             kwargs = dict(
@@ -1207,7 +1255,10 @@ def main():
             if not wait_for_ddos_guard(page):
                 human_pause("Open the site in this window and let it finish loading.")
             for i, link in enumerate(todo, start=1):
+                active_link, active_position = link, i
+                apply_queue_transition(counts, "processing")
                 show_item_result(i, len(todo), link, "processing")
+                show_queue_counts(counts)
                 result, detail = "error", "unexpected error"
                 for attempt in range(1, MAX_LINK_ATTEMPTS + 1):
                     try:
@@ -1227,9 +1278,9 @@ def main():
                     verbose(f"Retrying {compact_link(link)} (attempt {attempt + 1}/{MAX_LINK_ATTEMPTS})")
                     wait_for_internet(10)
                     time.sleep(min(3 * 2 ** (attempt - 1), 12))
-                show_item_result(i, len(todo), link, result, detail)
                 if result in ("ok", "skip"):
                     mark_done(link)
+                apply_queue_transition(counts, result)
                 if result == "ok":
                     saved += 1
                 elif result == "skip":
@@ -1238,13 +1289,31 @@ def main():
                     missing.append(link)
                 else:
                     failed.append(link)
+                active_link, active_position = None, None
+                show_item_result(i, len(todo), link, result, detail)
+                show_queue_counts(counts)
                 if i != len(todo):
                     time.sleep(DELAY_BETWEEN_LINKS)
     except KeyboardInterrupt:
         interrupted = True
+        if active_link is not None:
+            apply_queue_transition(counts, "pending")
+            show_item_result(
+                active_position, len(todo), active_link, "pending", "interrupted; still pending"
+            )
+            active_link, active_position = None, None
+            show_queue_counts(counts)
         print("\n" + paint("Stopped by user. Completed downloads are retained.", "33"))
     except Exception as exc:
         record_error("startup/runtime", BASE, exc)
+        if active_link is not None:
+            apply_queue_transition(counts, "error")
+            failed.append(active_link)
+            show_item_result(
+                active_position, len(todo), active_link, "error", "runtime error; see error log"
+            )
+            active_link, active_position = None, None
+            show_queue_counts(counts)
         print(paint(f"Browser error: {short_error(exc)}", "31"))
         print(f"Details saved to {ERROR_LOG}")
     finally:
@@ -1260,6 +1329,7 @@ def main():
             except OSError as exc:
                 record_error("skip log", SKIP_LOG, exc)
         print(paint("─" * 65, "90"))
+        show_queue_counts(counts)
         print(f"Summary: {paint(str(saved) + ' saved', '32')} | "
               f"{len(skipped)} already present/duplicate | "
               f"{len(missing)} missing | {paint(str(len(failed)) + ' failed', '31')}")

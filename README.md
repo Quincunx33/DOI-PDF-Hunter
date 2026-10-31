@@ -74,7 +74,7 @@ Run the tool:
 python xtract_doi.py
 ```
 
-On Windows, double-click `run_pdf_hunter.bat` to launch the tool and keep the Command Prompt open after it finishes. The queue is printed as `PENDING`, `PROCESSING`, and `SUCCESS` (or `SKIPPED`, `MISSING`, or `FAILED`) as each link is handled. The terminal fallback asks for the PDF download folder; a new path is created automatically and saved for next time.
+On Windows, double-click `run_pdf_hunter.bat` to launch the tool and keep the Command Prompt open after it finishes. The queue is printed as `PENDING`, `PROCESSING`, and `SUCCESS` (or `SKIPPED`, `MISSING`, or `FAILED`) as each link is handled. A live counter line shows total, pending, processing, success, skipped, missing, and failed counts; it refreshes on every status change. The terminal fallback asks for the PDF download folder; a new path is created automatically and saved for next time.
 
 ## Notes
 
