@@ -147,6 +147,18 @@ def apply_queue_transition(counts, status):
 class TerminalDashboard:
     """Render a clean, fixed-size terminal dashboard instead of scrolling logs."""
 
+    ASCII_ART = r"""                    _.:._
+                  ."\ | /".
+.,__              "=.\:/.="              __,.
+ "=.`"=._            /^\            _.="`.="
+   ".'.'.=.=.=.=.-,/   \,-.=.=.=.=".'.'."
+     `~.`.`.`.`.`.`.     .'.'.'.'.'.'.~`
+        `~.`` ` `.`.\   /.'.' ' ''.~`
+            `=.-~~-._ ) ( _.-~~-.=`
+                    `\ /`
+                     ( )
+                      Y""".splitlines()
+
     STATUS_COLORS = {
         "PREPARING": "36",
         "READY": "36",
@@ -164,6 +176,8 @@ class TerminalDashboard:
         self.ansi = self.is_tty and COLOR_ENABLED
         self.drawn = False
         self.width = shutil.get_terminal_size(fallback=(100, 24)).columns
+        self.height = shutil.get_terminal_size(fallback=(100, 24)).lines
+        self.logs = []
 
     def _clip(self, text):
         return text[:max(1, self.width - 1)]
@@ -196,30 +210,55 @@ class TerminalDashboard:
             current += f"  |  {message}"
         return [self._clip(line) for line in (line1, line2, current)]
 
-    def render(self, counts, status="READY", position=None, link="", detail=""):
-        self.width = shutil.get_terminal_size(fallback=(100, 24)).columns
+    def render(
+        self,
+        counts,
+        status="READY",
+        position=None,
+        link="",
+        detail="",
+        log_entry=None,
+    ):
+        terminal_size = shutil.get_terminal_size(fallback=(100, 24))
+        self.width, self.height = terminal_size.columns, terminal_size.lines
+        if log_entry is not None:
+            log_status, log_position, log_link, log_detail = log_entry
+            self.logs.append((log_status, log_position, log_link, log_detail))
+
         lines = self._lines(counts, status, position, link, detail)
-        status_color = self.STATUS_COLORS.get(status, "36")
-        title = "DOI PDF HUNTER"
-        first = paint(title, "1;36") + lines[0][len(title):]
-        second = paint(lines[1], "90")
-        third = paint(status, status_color) + lines[2][len(status):]
+        title = paint("DOI PDF HUNTER", "1;36") + lines[0][len("DOI PDF HUNTER"):]
+        counter = paint(lines[1], "90")
+        current = paint(status, self.STATUS_COLORS.get(status, "36")) + lines[2][len(status):]
+        output_lines = [title, counter, current, "", paint("RECENT RESULTS", "1;36")]
+        output_lines.append(paint("─" * min(self.width - 1, 72), "90"))
+
+        output_lines = [paint(line, "96") for line in self.ASCII_ART] + [""] + output_lines
+        max_logs = max(1, self.height - len(output_lines) - 1)
+        recent = self.logs[-max_logs:]
+        if not recent:
+            output_lines.append(paint("Waiting for the first paper result…", "90"))
+        else:
+            for log_status, log_position, log_link, log_detail in recent:
+                log_line = (
+                    f"{log_status:<9} {log_position:>3}/{counts['total']}  "
+                    f"{compact_link(log_link, max(16, self.width // 3))}"
+                )
+                if log_detail:
+                    log_line += f"  |  {log_detail}"
+                log_line = self._clip(log_line)
+                colored_status = paint(
+                    log_status, self.STATUS_COLORS.get(log_status, "90")
+                )
+                output_lines.append(colored_status + log_line[len(log_status):])
+
+        output = "\n".join(output_lines) + "\n"
         if self.ansi:
-            output = "\033[3A" if self.drawn else ""
-            for line in (first, second, third):
-                output += "\033[2K" + line + "\n"
-            sys.stdout.write(output)
-            sys.stdout.flush()
-        elif self.is_tty:
-            compact = (
-                f"{status} | {completed_count(counts)}/{counts['total']} done | "
-                f"P:{counts['pending']} R:{counts['processing']} S:{counts['success']} "
-                f"SK:{counts['skipped']} M:{counts['missing']} F:{counts['failed']}"
-            )
-            sys.stdout.write("\r" + compact[:self.width - 1].ljust(self.width - 1))
+            # Redraw the complete compact screen so the dashboard stays above
+            # its accumulating result log instead of scrolling through output.
+            sys.stdout.write("\033[2J\033[H" + output)
             sys.stdout.flush()
         else:
-            print("\n".join(lines), flush=True)
+            print(output, end="", flush=True)
         self.drawn = True
 
     def finish(self):
@@ -1386,6 +1425,7 @@ def main():
                     position=i,
                     link=link,
                     detail=detail,
+                    log_entry=(visible_status, i, link, detail),
                 )
                 if i != len(todo):
                     time.sleep(DELAY_BETWEEN_LINKS)
@@ -1399,6 +1439,7 @@ def main():
                 position=active_position,
                 link=active_link,
                 detail="item returned to pending",
+                log_entry=("STOPPED", active_position, active_link, "returned to pending"),
             )
             active_link, active_position = None, None
     except Exception as exc:
@@ -1414,6 +1455,7 @@ def main():
                 position=active_position,
                 link=active_link,
                 detail="runtime error; see error log",
+                log_entry=("FAILED", active_position, active_link, runtime_error_detail),
             )
             active_link, active_position = None, None
     finally:

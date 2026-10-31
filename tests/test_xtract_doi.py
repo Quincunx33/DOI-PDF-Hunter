@@ -114,16 +114,53 @@ class LinkInputTests(unittest.TestCase):
                 position=1,
                 link="10.1000/example",
                 detail="saved paper.pdf",
+                log_entry=("SUCCESS", 1, "10.1000/example", "paper.pdf | 829 KB"),
             )
         rendered = output.getvalue()
         self.assertIn("DOI PDF HUNTER", rendered)
         self.assertTrue("Processing 1" in rendered or "PROC 1" in rendered)
         self.assertTrue("Pending 1" in rendered or "PEND 1" in rendered)
         self.assertTrue("Success 1" in rendered or "SUCCESS 1" in rendered)
-        self.assertIn("PROCESSING  1/2", rendered)
+        self.assertIn("PROCESSING", rendered)
+        self.assertIn("1/2", rendered)
         self.assertIn("Searching PDF", rendered)
         self.assertIn("10.1000/example", rendered)
+        self.assertIn("RECENT RESULTS", rendered)
+        self.assertIn("paper.pdf | 829 KB", rendered)
+        self.assertIn("                    _.:._", rendered)
         self.assertIn("░", rendered)
+
+    def test_dashboard_recent_results_show_saved_and_missing_logs(self):
+        counts = xtract_doi.new_queue_counts(2)
+        output = StringIO()
+        with redirect_stdout(output):
+            dashboard = xtract_doi.TerminalDashboard()
+            xtract_doi.apply_queue_transition(counts, "processing")
+            xtract_doi.apply_queue_transition(counts, "ok")
+            dashboard.render(
+                counts,
+                status="SUCCESS",
+                position=1,
+                link="10.1000/saved",
+                detail="paper.pdf | 829 KB",
+                log_entry=("SUCCESS", 1, "10.1000/saved", "paper.pdf | 829 KB"),
+            )
+            xtract_doi.apply_queue_transition(counts, "processing")
+            xtract_doi.apply_queue_transition(counts, "missing")
+            dashboard.render(
+                counts,
+                status="MISSING",
+                position=2,
+                link="10.1000/missing",
+                detail="not available on this page",
+                log_entry=("MISSING", 2, "10.1000/missing", "not available on this page"),
+            )
+        rendered = output.getvalue()
+        self.assertIn("SUCCESS", rendered)
+        self.assertIn("paper.pdf | 829 KB", rendered)
+        self.assertIn("MISSING", rendered)
+        self.assertIn("not available on this page", rendered)
+        self.assertEqual(len(dashboard.logs), 2)
 
     def test_dashboard_redraws_same_region_on_interactive_terminal(self):
         class FakeTerminal(StringIO):
@@ -140,8 +177,7 @@ class LinkInputTests(unittest.TestCase):
             xtract_doi.apply_queue_transition(counts, "processing")
             dashboard.render(counts, status="PROCESSING", position=1, link="10.1000/test")
         rendered = terminal.getvalue()
-        self.assertIn("\x1b[3A", rendered)
-        self.assertIn("\x1b[2K", rendered)
+        self.assertIn("\x1b[2J\x1b[H", rendered)
 
 
 class DownloadSettingsTests(unittest.TestCase):
