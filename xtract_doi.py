@@ -1266,7 +1266,17 @@ def main():
     # Opening a .py by double-click may start Python from its installation
     # folder. Always search beside this script instead of WindowsApps.
     os.chdir(SCRIPT_DIR)
-    print()
+    print(paint(r"""                    _.:._
+                  ."\ | /".
+.,__              "=.\:/.="              __,.
+ "=.`"=._            /^\            _.="`.="
+   ".'.'.=.=.=.=.-,/   \,-.=.=.=.=".'.'."
+     `~.`.`.`.`.`.`.     .'.'.'.'.'.'.~`
+        `~.`` ` `.`.\   /.'.' ' ''.~`
+            `=.-~~-._ ) ( _.-~~-.=`
+                    `\ /`
+                     ( )
+                      Y""", "96"))
     print(paint("  DOI PDF HUNTER", "1;36"))
     print(paint("  Academic PDF downloader", "90"))
     settings = load_settings()
