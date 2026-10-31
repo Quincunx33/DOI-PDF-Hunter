@@ -109,12 +109,18 @@ def compact_link(link, limit=52):
 
 
 def show_item_result(position, total, link, status, detail=""):
-    styles = {"ok": ("SAVED", "32"), "skip": ("SKIP", "33"),
-              "missing": ("MISS", "33"), "error": ("ERROR", "31")}
+    styles = {
+        "pending": ("PENDING", "36"),
+        "processing": ("PROCESSING", "33"),
+        "ok": ("SUCCESS", "32"),
+        "skip": ("SKIPPED", "33"),
+        "missing": ("MISSING", "33"),
+        "error": ("FAILED", "31"),
+    }
     name, color = styles.get(status, (status.upper(), "36"))
     extra = f"  {detail}" if detail else ""
     print(f"[{position:>{len(str(total))}}/{total}] "
-          f"{paint(name.ljust(5), color)}  {compact_link(link)}{extra}", flush=True)
+          f"{paint(name.ljust(10), color)}  {compact_link(link)}{extra}", flush=True)
 
 
 def verbose(message):
@@ -248,14 +254,26 @@ def discover_link_files(directory="."):
     return found
 
 
-def select_link_files(directory="."):
+def prompt_for_link_file(directory="."):
+    """Ask for a .txt file path when no detected file is suitable or available."""
+    while True:
+        raw_path = input("Enter the full path to your link .txt file (blank to cancel): ").strip()
+        if not raw_path:
+            raise SystemExit("No link file selected.")
+        candidate = Path(raw_path.strip("\"'")).expanduser()
+        if not candidate.is_absolute():
+            candidate = Path(directory) / candidate
+        if candidate.is_file() and candidate.suffix.casefold() == ".txt":
+            return [candidate.resolve()]
+        print("That file was not found or is not a .txt file. Try again.")
+
+
+def select_link_files(directory=".", allow_custom_path=False):
     candidates = discover_link_files(directory)
     if not candidates:
-        sys.exit(
-            f"{paint('No DOI/URL TXT files found.', '31')}\n"
-            "Put a .txt file containing DOI/URL links beside xtract_doi.py."
-        )
-    if len(candidates) == 1:
+        print(paint("No DOI/URL TXT files were discovered in the project folder.", "33"))
+        return prompt_for_link_file(directory)
+    if len(candidates) == 1 and not allow_custom_path:
         print(f"TXT: {candidates[0].name} (selected)")
         return candidates
 
@@ -267,7 +285,8 @@ def select_link_files(directory="."):
          if path.name.casefold() == LINKS_FILE.casefold()),
         None,
     )
-    prompt = f"Select (number/all, Enter={default}): " if default else "Select (number/all): "
+    options = "number/all/path" if allow_custom_path else "number/all"
+    prompt = f"Select ({options}, Enter={default}): " if default else f"Select ({options}): "
     while True:
         choice = input(prompt).strip().lower()
         if not choice:
@@ -277,6 +296,8 @@ def select_link_files(directory="."):
             continue
         if choice == "all":
             return candidates
+        if choice in {"path", "file", "browse"}:
+            return prompt_for_link_file(directory)
         try:
             numbers = []
             for part in re.split(r"[\s,]+", choice):
@@ -292,7 +313,7 @@ def select_link_files(directory="."):
                 raise ValueError
             return [candidates[number - 1] for number in numbers]
         except ValueError:
-            print("Use a file number (e.g. 1,2) or 'all'.")
+            print(f"Use a file number (e.g. 1,2), 'all'{', or path' if allow_custom_path else ''}.")
 
 
 def load_settings(path=None):
@@ -493,13 +514,16 @@ def show_setup_window(settings):
 def choose_download_dir_cli(settings):
     """CLI fallback for selecting and creating a download directory."""
     default = Path(settings["download_dir"])
-    choice = input(f"Download folder [{default}] (Enter to keep): ").strip()
+    choice = input(
+        f"PDF download folder [{default}] (Enter to keep, or type a new path to create it): "
+    ).strip()
     requested = choice if choice else default
     try:
         destination = prepare_download_directory(requested)
         save_settings({"download_dir": str(destination)})
     except OSError as exc:
         sys.exit(f"Could not create download folder {requested}: {exc}")
+    print(f"PDF download folder: {destination}")
     return destination
 
 
@@ -1137,7 +1161,7 @@ def main():
         setup = show_setup_window(settings)
     except Exception as exc:
         print(f"File-picker window unavailable ({short_error(exc)}); using terminal selection.")
-        selected_files = select_link_files(SCRIPT_DIR)
+        selected_files = select_link_files(SCRIPT_DIR, allow_custom_path=True)
         outdir = choose_download_dir_cli(settings)
     else:
         if setup is None:
@@ -1149,8 +1173,12 @@ def main():
     hash_index_path = outdir / HASH_INDEX_FILE
     hash_index = index_existing_pdfs(outdir, load_hash_index(hash_index_path), hash_index_path)
     todo = links[:BATCH_SIZE]
-    print(f"Files: {', '.join(path.name for path in selected_files)}")
+    print(f"Files: {', '.join(str(path) for path in selected_files)}")
+    print(f"PDF download folder: {outdir}")
     print(f"Queue: {len(links)} pending | This run: {len(todo)} | Retries/link: {MAX_LINK_ATTEMPTS - 1}")
+    print(paint("─" * 65, "90"))
+    for position, link in enumerate(todo, start=1):
+        show_item_result(position, len(todo), link, "pending")
     print(paint("─" * 65, "90"))
 
     saved = 0
@@ -1179,6 +1207,7 @@ def main():
             if not wait_for_ddos_guard(page):
                 human_pause("Open the site in this window and let it finish loading.")
             for i, link in enumerate(todo, start=1):
+                show_item_result(i, len(todo), link, "processing")
                 result, detail = "error", "unexpected error"
                 for attempt in range(1, MAX_LINK_ATTEMPTS + 1):
                     try:
@@ -1242,5 +1271,22 @@ def main():
             print(f"Error details: {ERROR_LOG}")
 
 
+def pause_before_exit():
+    """Keep an interactive console visible after double-click/terminal runs."""
+    if os.environ.get("PDF_NO_PAUSE", "").strip().lower() in {"1", "yes", "true"}:
+        return
+    try:
+        if sys.stdin is not None and sys.stdin.isatty():
+            input("\nPress Enter to close DOI PDF Hunter…")
+    except (EOFError, OSError):
+        pass
+
+
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except BaseException:
+        pause_before_exit()
+        raise
+    else:
+        pause_before_exit()

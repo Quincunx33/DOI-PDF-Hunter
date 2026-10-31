@@ -57,6 +57,8 @@ python -m playwright install chromium
 
 On startup, the setup window discovers `.txt` files beside the script that contain DOI/URL links. Select one or more files from the list, or use **Browse for link file(s)** to choose a `.txt` file elsewhere. A `links.txt` file is no longer required.
 
+If the native setup window is unavailable, the terminal fallback still lets you choose a discovered file by number or type `path` to enter a `.txt` file path. If it finds no files, it directly asks for the path.
+
 In **Settings — download location**, browse to an existing folder or create a new folder. The chosen destination is stored in `settings.json` and reused the next time the tool starts. The PDF hash index is kept in that destination so duplicate checks follow the selected folder.
 
 Example contents for a link file:
@@ -72,12 +74,15 @@ Run the tool:
 python xtract_doi.py
 ```
 
+On Windows, double-click `run_pdf_hunter.bat` to launch the tool and keep the Command Prompt open after it finishes. The queue is printed as `PENDING`, `PROCESSING`, and `SUCCESS` (or `SKIPPED`, `MISSING`, or `FAILED`) as each link is handled. The terminal fallback asks for the PDF download folder; a new path is created automatically and saved for next time.
+
 ## Notes
 
 - PDFs are saved in the selected download folder (initially `downloads/`).
 - Duplicate and skipped items are tracked automatically.
 - Some sites may require a CAPTCHA or manual browser interaction.
 - On headless/minimal systems without Tkinter, the tool falls back to terminal file discovery/selection and lets you enter a download-folder path. Linux users may need to install their distribution's `python3-tk` package to use the native setup window.
+- When running interactively, the Python script waits for Enter before closing. Set `PDF_NO_PAUSE=1` to disable that prompt (the Windows `.bat` launcher handles the pause itself).
 - For extra logs, run:
 
 ```bash

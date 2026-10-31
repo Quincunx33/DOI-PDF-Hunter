@@ -1,6 +1,9 @@
 import json
+import os
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -41,6 +44,42 @@ class LinkInputTests(unittest.TestCase):
             with patch("builtins.input", return_value="2"):
                 selected = xtract_doi.select_link_files(folder)
             self.assertEqual([path.name for path in selected], ["b.txt"])
+
+    def test_terminal_fallback_accepts_external_file_when_nothing_is_discovered(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project_folder = root / "project"
+            project_folder.mkdir()
+            external_file = root / "my links.txt"
+            external_file.write_text("10.1000/external\n", encoding="utf-8")
+            with patch("builtins.input", return_value=str(external_file)):
+                selected = xtract_doi.select_link_files(
+                    project_folder, allow_custom_path=True
+                )
+            self.assertEqual(selected, [external_file.resolve()])
+
+    def test_terminal_fallback_can_switch_from_discovered_file_to_path(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project_folder = root / "project"
+            project_folder.mkdir()
+            (project_folder / "local.txt").write_text("10.1000/local\n", encoding="utf-8")
+            external_file = root / "selected.txt"
+            external_file.write_text("10.1000/selected\n", encoding="utf-8")
+            with patch("builtins.input", side_effect=["path", str(external_file)]):
+                selected = xtract_doi.select_link_files(
+                    project_folder, allow_custom_path=True
+                )
+            self.assertEqual(selected, [external_file.resolve()])
+
+    def test_console_status_output_includes_requested_live_states(self):
+        output = StringIO()
+        with redirect_stdout(output):
+            xtract_doi.show_item_result(1, 1, "10.1000/example", "pending")
+            xtract_doi.show_item_result(1, 1, "10.1000/example", "processing")
+            xtract_doi.show_item_result(1, 1, "10.1000/example", "ok")
+        for label in ("PENDING", "PROCESSING", "SUCCESS"):
+            self.assertIn(label, output.getvalue())
 
 
 class DownloadSettingsTests(unittest.TestCase):
@@ -87,6 +126,18 @@ class DownloadSettingsTests(unittest.TestCase):
             self.assertEqual(result, target.resolve())
             self.assertTrue(result.is_dir())
             save.assert_called_once_with({"download_dir": str(target.resolve())})
+
+    def test_interactive_console_pauses_before_exit(self):
+        class InteractiveInput:
+            @staticmethod
+            def isatty():
+                return True
+
+        with patch.dict(os.environ, {"PDF_NO_PAUSE": "0"}), patch.object(
+            xtract_doi.sys, "stdin", InteractiveInput()
+        ), patch("builtins.input") as input_mock:
+            xtract_doi.pause_before_exit()
+        input_mock.assert_called_once()
 
 
 if __name__ == "__main__":
